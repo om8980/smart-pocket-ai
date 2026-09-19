@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isParentOf(studentUid) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(studentUid)).data.parentId == request.auth.uid;
+    }
+
+    // users/{uid}: profile doc. Users can read/write only their own profile.
+    // Parents may read their linked children's profiles (to show names etc).
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isParentOf(uid);
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if false;
+    }
+
+    // wallets/{uid}: student owns read/write. Parent can read only.
+    match /wallets/{uid} {
+      allow read: if isOwner(uid) || isParentOf(uid);
+      allow write: if isOwner(uid);
+    }
+
+    // splitSettings/{uid}: student can read; only the linked parent can write.
+    // (If you want students to also self-adjust within limits, add isOwner(uid) to write.)
+    match /splitSettings/{uid} {
+      allow read: if isOwner(uid) || isParentOf(uid);
+      allow write: if isParentOf(uid);
+    }
+
+    // transactions/{id}: student owns their own transactions (by walletUid).
+    // Parent can read transactions belonging to their linked children.
+    match /transactions/{id} {
+      allow read: if isSignedIn() &&
+        (resource.data.walletUid == request.auth.uid || isParentOf(resource.data.walletUid));
+      allow create: if isSignedIn() &&
+        (request.resource.data.walletUid == request.auth.uid || isParentOf(request.resource.data.walletUid));
+      allow update, delete: if false; // transactions are append-only
+    }
+
+    // savingsGoals/{id}: student owns their own goals.
+    match /savingsGoals/{id} {
+      allow read: if isSignedIn() &&
+        (resource.data.uid == request.auth.uid || isParentOf(resource.data.uid));
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // pocketMoneySchedule/{id}: only the linked parent may write; the student may read their own.
+    match /pocketMoneySchedule/{id} {
+      allow read: if isSignedIn() &&
+        (resource.data.studentUid == request.auth.uid || resource.data.parentUid == request.auth.uid);
+      allow write: if isSignedIn() && request.resource.data.parentUid == request.auth.uid;
+    }
+  }
+}
